@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>WebGL2 Cube</title>
+<style>html,body{margin:0;height:100%;background:#111}</style></head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+canvas.width = innerWidth; canvas.height = innerHeight;
+const gl = canvas.getContext('webgl2');
+if (!gl) { alert('WebGL2 미지원'); }
+
+// ===== 1) 셰이더 =====
+const vs = `#version 300 es
+in vec3 aPos;
+uniform mat4 uMVP;
+void main(){ gl_Position = uMVP * vec4(aPos, 1.0); }
+`;
+const fs = `#version 300 es
+precision highp float;
+out vec4 outColor;
+void main(){ outColor = vec4(0.2,0.7,1.0,1.0); }
+`;
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+    throw gl.getShaderInfoLog(s);
+  }
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){
+  throw gl.getProgramInfoLog(prog);
+}
+gl.useProgram(prog);
+
+// ===== 2) 지오메트리(정점/인덱스 버퍼) =====
+// 큐브 8개 정점
+const positions = new Float32Array([
+  -1,-1,-1,  1,-1,-1,  1, 1,-1, -1, 1,-1, // back
+  -1,-1, 1,  1,-1, 1,  1, 1, 1, -1, 1, 1  // front
+]);
+// 각 면 인덱스
+const indices = new Uint16Array([
+  0,1,2, 2,3,0, // back
+  4,5,6, 6,7,4, // front
+  0,4,7, 7,3,0, // left
+  1,5,6, 6,2,1, // right
+  3,2,6, 6,7,3, // top
+  0,1,5, 5,4,0  // bottom
+]);
+
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+const vbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+const ebo = gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'aPos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+
+// ===== 3) 간단 행렬 유틸 (mat4) =====
+function mat4Identity(){ return [1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1]; }
+function mat4Multiply(a,b){
+  const o = new Array(16);
+  for (let r=0;r<4;r++){
+    for (let c=0;c<4;c++){
+      o[r*4+c] =
+        a[r*4+0]*b[0*4+c] +
+        a[r*4+1]*b[1*4+c] +
+        a[r*4+2]*b[2*4+c] +
+        a[r*4+3]*b[3*4+c];
+    }
+  }
+  return o;
+}
+function mat4Perspective(fovy, aspect, near, far){
+  const f = 1/Math.tan(fovy/2), nf = 1/(near - far);
+  return [
+    f/aspect,0,0,0,
+    0,f,0,0,
+    0,0,(far+near)*nf,-1,
+    0,0,(2*far*near)*nf,0
+  ];
+}
+function mat4Translate(m, x,y,z){
+  const t = mat4Identity();
+  t[12]=x; t[13]=y; t[14]=z; 
+  return mat4Multiply(m,t);
+}
+function mat4RotateY(m, rad){
+  const c=Math.cos(rad), s=Math.sin(rad);
+  const r=[ c,0,s,0,  0,1,0,0,  -s,0,c,0,  0,0,0,1 ];
+  return mat4Multiply(m,r);
+}
+function mat4RotateX(m, rad){
+  const c=Math.cos(rad), s=Math.sin(rad);
+  const r=[ 1,0,0,0,  0,c,-s,0,  0,s,c,0,  0,0,0,1 ];
+  return mat4Multiply(m,r);
+}
+
+// ===== 4) 상태 설정 & 루프 =====
+gl.enable(gl.DEPTH_TEST);
+const uMVP = gl.getUniformLocation(prog, 'uMVP');
+
+function render(t){
+  t *= 0.001; // ms->s
+  gl.viewport(0,0,gl.canvas.width, gl.canvas.height);
+  gl.clearColor(0.07,0.07,0.1,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+  const aspect = gl.canvas.width / gl.canvas.height;
+  let proj = mat4Perspective(60*Math.PI/180, aspect, 0.1, 100);
+  let viewModel = mat4Identity();
+  viewModel = mat4Translate(viewModel, 0, 0, -6);
+  viewModel = mat4RotateY(viewModel, t*1.1);
+  viewModel = mat4RotateX(viewModel, t*0.7);
+
+  const mvp = mat4Multiply(proj, viewModel);
+  gl.uniformMatrix4fv(uMVP, false, new Float32Array(mvp));
+
+  gl.bindVertexArray(vao);
+  gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+// 리사이즈 대응
+addEventListener('resize', () => {
+  canvas.width = innerWidth; canvas.height = innerHeight;
+});
+</script>
+</body>
+</html>
