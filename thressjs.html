@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>Three.js Cube</title>
+<style>html,body{margin:0;height:100%;background:#111}</style></head>
+<body>
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.165.0/build/three.module.js';
+// (옵션) 마우스 조작: import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 100);
+camera.position.set(0,0,6);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// 큐브
+const geo = new THREE.BoxGeometry(2,2,2);
+const mat = new THREE.MeshStandardMaterial({ color: 0x34b0ff, metalness:0.2, roughness:0.6 });
+const cube = new THREE.Mesh(geo, mat);
+scene.add(cube);
+
+// 조명
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+dir.position.set(3,3,5);
+scene.add(dir);
+
+// (옵션) OrbitControls
+// const controls = new OrbitControls(camera, renderer.domElement);
+
+function animate(t){
+  t *= 0.001;
+  cube.rotation.y = t*1.1;
+  cube.rotation.x = t*0.7;
+  // controls?.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
