@@ -1,141 +1,278 @@
+
 <!doctype html>
 <html lang="ko">
-<head><meta charset="utf-8"><title>WebGL2 Cube</title>
-<style>html,body{margin:0;height:100%;background:#111}</style></head>
+<head>
+  <meta charset="utf-8" />
+  <title>WebGL2 Rotating Cube (Clean)</title>
+  <style>
+    html, body { margin:0; height:100%; background:#111; }
+    canvas { display:block; width:100%; height:100%; }
+  </style>
+</head>
 <body>
-<canvas id="c"></canvas>
+<canvas id="glcanvas"></canvas>
 <script>
-const canvas = document.getElementById('c');
-canvas.width = innerWidth; canvas.height = innerHeight;
-const gl = canvas.getContext('webgl2');
-if (!gl) { alert('WebGL2 미지원'); }
+(() => {
+  const canvas = document.getElementById('glcanvas');
+  const gl = canvas.getContext('webgl2', { antialias: true });
+  if (!gl) { alert('WebGL2를 지원하지 않는 브라우저입니다.'); return; }
 
-// ===== 1) 셰이더 =====
-const vs = `#version 300 es
-in vec3 aPos;
-uniform mat4 uMVP;
-void main(){ gl_Position = uMVP * vec4(aPos, 1.0); }
-`;
-const fs = `#version 300 es
-precision highp float;
-out vec4 outColor;
-void main(){ outColor = vec4(0.2,0.7,1.0,1.0); }
-`;
-function compile(type, src){
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src); gl.compileShader(s);
-  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
-    throw gl.getShaderInfoLog(s);
-  }
-  return s;
-}
-const prog = gl.createProgram();
-gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
-gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
-gl.linkProgram(prog);
-if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){
-  throw gl.getProgramInfoLog(prog);
-}
-gl.useProgram(prog);
-
-// ===== 2) 지오메트리(정점/인덱스 버퍼) =====
-// 큐브 8개 정점
-const positions = new Float32Array([
-  -1,-1,-1,  1,-1,-1,  1, 1,-1, -1, 1,-1, // back
-  -1,-1, 1,  1,-1, 1,  1, 1, 1, -1, 1, 1  // front
-]);
-// 각 면 인덱스
-const indices = new Uint16Array([
-  0,1,2, 2,3,0, // back
-  4,5,6, 6,7,4, // front
-  0,4,7, 7,3,0, // left
-  1,5,6, 6,2,1, // right
-  3,2,6, 6,7,3, // top
-  0,1,5, 5,4,0  // bottom
-]);
-
-const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-const vbo = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-const ebo = gl.createBuffer();
-gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-
-const aPos = gl.getAttribLocation(prog, 'aPos');
-gl.enableVertexAttribArray(aPos);
-gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
-
-// ===== 3) 간단 행렬 유틸 (mat4) =====
-function mat4Identity(){ return [1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1]; }
-function mat4Multiply(a,b){
-  const o = new Array(16);
-  for (let r=0;r<4;r++){
-    for (let c=0;c<4;c++){
-      o[r*4+c] =
-        a[r*4+0]*b[0*4+c] +
-        a[r*4+1]*b[1*4+c] +
-        a[r*4+2]*b[2*4+c] +
-        a[r*4+3]*b[3*4+c];
+  // ===== 캔버스/뷰포트 세팅 (HiDPI 대응) =====
+  function resizeCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.floor(gl.canvas.clientWidth  * dpr);
+    const h = Math.floor(gl.canvas.clientHeight * dpr);
+    if (gl.canvas.width !== w || gl.canvas.height !== h) {
+      gl.canvas.width = w;
+      gl.canvas.height = h;
+      gl.viewport(0, 0, w, h);
     }
   }
-  return o;
-}
-function mat4Perspective(fovy, aspect, near, far){
-  const f = 1/Math.tan(fovy/2), nf = 1/(near - far);
-  return [
-    f/aspect,0,0,0,
-    0,f,0,0,
-    0,0,(far+near)*nf,-1,
-    0,0,(2*far*near)*nf,0
-  ];
-}
-function mat4Translate(m, x,y,z){
-  const t = mat4Identity();
-  t[12]=x; t[13]=y; t[14]=z; 
-  return mat4Multiply(m,t);
-}
-function mat4RotateY(m, rad){
-  const c=Math.cos(rad), s=Math.sin(rad);
-  const r=[ c,0,s,0,  0,1,0,0,  -s,0,c,0,  0,0,0,1 ];
-  return mat4Multiply(m,r);
-}
-function mat4RotateX(m, rad){
-  const c=Math.cos(rad), s=Math.sin(rad);
-  const r=[ 1,0,0,0,  0,c,-s,0,  0,s,c,0,  0,0,0,1 ];
-  return mat4Multiply(m,r);
-}
+  // 초기 사이즈 적용을 위해 먼저 DOM에 크기를 설정
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
 
-// ===== 4) 상태 설정 & 루프 =====
-gl.enable(gl.DEPTH_TEST);
-const uMVP = gl.getUniformLocation(prog, 'uMVP');
+  // ===== 셰이더 =====
+  const VS_SRC = `#version 300 es
+  precision highp float;
+  layout(location = 0) in vec3 aPosition;
+  layout(location = 1) in vec3 aColor;
+  uniform mat4 uProjection;
+  uniform mat4 uModelView;
+  out vec3 vColor;
+  void main() {
+    vColor = aColor;
+    gl_Position = uProjection * uModelView * vec4(aPosition, 1.0);
+  }`;
 
-function render(t){
-  t *= 0.001; // ms->s
-  gl.viewport(0,0,gl.canvas.width, gl.canvas.height);
-  gl.clearColor(0.07,0.07,0.1,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  const FS_SRC = `#version 300 es
+  precision highp float;
+  in vec3 vColor;
+  out vec4 outColor;
+  void main() {
+    outColor = vec4(vColor, 1.0);
+  }`;
 
-  const aspect = gl.canvas.width / gl.canvas.height;
-  let proj = mat4Perspective(60*Math.PI/180, aspect, 0.1, 100);
-  let viewModel = mat4Identity();
-  viewModel = mat4Translate(viewModel, 0, 0, -6);
-  viewModel = mat4RotateY(viewModel, t*1.1);
-  viewModel = mat4RotateX(viewModel, t*0.7);
+  function compileShader(type, source) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, source);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      const info = gl.getShaderInfoLog(s);
+      gl.deleteShader(s);
+      throw new Error('Shader compile error:\n' + info);
+    }
+    return s;
+  }
 
-  const mvp = mat4Multiply(proj, viewModel);
-  gl.uniformMatrix4fv(uMVP, false, new Float32Array(mvp));
+  const vs = compileShader(gl.VERTEX_SHADER, VS_SRC);
+  const fs = compileShader(gl.FRAGMENT_SHADER, FS_SRC);
 
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error('Program link error:\n' + gl.getProgramInfoLog(program));
+  }
+  gl.useProgram(program);
+
+  const uProjection = gl.getUniformLocation(program, 'uProjection');
+  const uModelView  = gl.getUniformLocation(program, 'uModelView');
+
+  // ===== 지오메트리 (정점 & 색상 & 인덱스) =====
+  // 큐브 8개 정점
+  const positions = new Float32Array([
+    // back (-Z)
+    -1,-1,-1,   1,-1,-1,   1, 1,-1,  -1, 1,-1,
+    // front (+Z)
+    -1,-1, 1,   1,-1, 1,   1, 1, 1,  -1, 1, 1
+  ]);
+
+  // 각 정점 색상 (보기 쉽게 파스텔톤)
+  const colors = new Float32Array([
+    0.2,0.6,1.0,   0.2,0.6,1.0,   0.2,0.6,1.0,   0.2,0.6,1.0, // back
+    0.2,0.8,0.9,   0.2,0.8,0.9,   0.2,0.8,0.9,   0.2,0.8,0.9  // front
+  ]);
+
+  // 인덱스 (각 면 2개의 삼각형)
+  const indices = new Uint16Array([
+    // back
+    0,1,2,   2,3,0,
+    // front
+    4,5,6,   6,7,4,
+    // left
+    0,4,7,   7,3,0,
+    // right
+    1,5,6,   6,2,1,
+    // top
+    3,2,6,   6,7,3,
+    // bottom
+    0,1,5,   5,4,0
+  ]);
+
+  // VAO
+  const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
-  gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
 
+  // VBO: positions
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); // layout(location = 0)
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+
+  // VBO: colors
+  const colBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(1); // layout(location = 1)
+  gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+
+  // EBO: indices
+  const idxBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+
+  gl.bindVertexArray(null); // 정리
+
+  // ===== 행렬 유틸 (column-major, out = a * b) =====
+  function mat4Create() {
+    const m = new Float32Array(16);
+    m[0]=1; m[5]=1; m[10]=1; m[15]=1;
+    return m;
+  }
+  function mat4Multiply(out, a, b) {
+    // out = a * b
+    const a00=a[0], a01=a[1], a02=a[2], a03=a[3];
+    const a10=a[4], a11=a[5], a12=a[6], a13=a[7];
+    const a20=a[8], a21=a[9], a22=a[10],a23=a[11];
+    const a30=a[12],a31=a[13],a32=a[14],a33=a[15];
+
+    const b00=b[0], b01=b[1], b02=b[2], b03=b[3];
+    const b10=b[4], b11=b[5], b12=b[6], b13=b[7];
+    const b20=b[8], b21=b[9], b22=b[10],b23=b[11];
+    const b30=b[12],b31=b[13],b32=b[14],b33=b[15];
+
+    out[0]=a00*b00 + a10*b01 + a20*b02 + a30*b03;
+    out[1]=a01*b00 + a11*b01 + a21*b02 + a31*b03;
+    out[2]=a02*b00 + a12*b01 + a22*b02 + a32*b03;
+    out[3]=a03*b00 + a13*b01 + a23*b02 + a33*b03;
+
+    out[4]=a00*b10 + a10*b11 + a20*b12 + a30*b13;
+    out[5]=a01*b10 + a11*b11 + a21*b12 + a31*b13;
+    out[6]=a02*b10 + a12*b11 + a22*b12 + a32*b13;
+    out[7]=a03*b10 + a13*b11 + a23*b12 + a33*b13;
+
+    out[8]=a00*b20 + a10*b21 + a20*b22 + a30*b23;
+    out[9]=a01*b20 + a11*b21 + a21*b22 + a31*b23;
+    out[10]=a02*b20 + a12*b21 + a22*b22 + a32*b23;
+    out[11]=a03*b20 + a13*b21 + a23*b22 + a33*b23;
+
+    out[12]=a00*b30 + a10*b31 + a20*b32 + a30*b33;
+    out[13]=a01*b30 + a11*b31 + a21*b32 + a31*b33;
+    out[14]=a02*b30 + a12*b31 + a22*b32 + a32*b33;
+    out[15]=a03*b30 + a13*b31 + a23*b33 + a33*b33;
+    return out;
+  }
+  function mat4Perspective(out, fovy, aspect, near, far) {
+    const f = 1.0 / Math.tan(fovy / 2);
+    out[0]  = f / aspect; out[1]=0; out[2]=0; out[3]=0;
+    out[4]  = 0; out[5]=f; out[6]=0; out[7]=0;
+    out[8]  = 0; out[9]=0; out[10]=(far+near)/(near-far); out[11]=-1;
+    out[12] = 0; out[13]=0; out[14]=(2*far*near)/(near-far); out[15]=0;
+    return out;
+  }
+  function mat4Translate(out, a, v) {
+    const x=v[0], y=v[1], z=v[2];
+    if (out !== a) {
+      out.set(a);
+    }
+    out[12] = a[0]*x + a[4]*y + a[8]*z  + a[12];
+    out[13] = a[1]*x + a[5]*y + a[9]*z  + a[13];
+    out[14] = a[2]*x + a[6]*y + a[10]*z + a[14];
+    out[15] = a[3]*x + a[7]*y + a[11]*z + a[15];
+    return out;
+  }
+  function mat4RotateX(out, a, rad) {
+    const s=Math.sin(rad), c=Math.cos(rad);
+    const a10=a[4], a11=a[5], a12=a[6], a13=a[7];
+    const a20=a[8], a21=a[9], a22=a[10],a23=a[11];
+    if (out !== a) out.set(a);
+    out[4] = a10*c + a20*s;
+    out[5] = a11*c + a21*s;
+    out[6] = a12*c + a22*s;
+    out[7] = a13*c + a23*s;
+    out[8] = a20*c - a10*s;
+    out[9] = a21*c - a11*s;
+    out[10]= a22*c - a12*s;
+    out[11]= a23*c - a13*s;
+    return out;
+  }
+  function mat4RotateY(out, a, rad) {
+    const s=Math.sin(rad), c=Math.cos(rad);
+    const a00=a[0], a01=a[1], a02=a[2], a03=a[3];
+    const a20=a[8], a21=a[9], a22=a[10],a23=a[11];
+    if (out !== a) out.set(a);
+    out[0] = a00*c - a20*s;
+    out[1] = a01*c - a21*s;
+    out[2] = a02*c - a22*s;
+    out[3] = a03*c - a23*s;
+    out[8] = a00*s + a20*c;
+    out[9] = a01*s + a21*c;
+    out[10]= a02*s + a22*c;
+    out[11]= a03*s + a23*c;
+    return out;
+  }
+
+  // ===== 렌더링 상태 =====
+  //gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.07, 0.07, 0.1, 1);
+
+  // ===== 애니메이션 루프 =====
+  const proj = mat4Create();
+  const modelView = mat4Create();
+  let prevW = 0, prevH = 0;
+
+  function render(t) {
+    t *= 0.001; // ms -> s
+    resizeCanvas();
+    // 뷰포트 크기 변경 시 투영행렬 갱신
+    const w = gl.canvas.width, h = gl.canvas.height;
+    if (w !== prevW || h !== prevH) {
+      const aspect = w / h;
+      mat4Perspective(proj, 60 * Math.PI/180, aspect, 0.1, 100);
+      gl.uniformMatrix4fv(uProjection, false, proj);
+      prevW = w; prevH = h;
+    }
+
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    // modelView = I -> translate -> rotateY -> rotateX
+    modelView.set(mat4Create());
+    mat4Translate(modelView, modelView, [0, 0, -6]);
+    mat4RotateY(modelView, modelView, t * 1.1);
+    mat4RotateX(modelView, modelView, t * 0.7);
+    gl.uniformMatrix4fv(uModelView, false, modelView);
+
+    gl.bindVertexArray(vao);
+    gl.useProgram(program);
+    gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+    gl.bindVertexArray(null);
+
+    requestAnimationFrame(render);
+  }
+  // 초기 프로젝션 업로드
+  {
+    const aspect = gl.canvas.width / gl.canvas.height;
+    mat4Perspective(proj, 60 * Math.PI/180, aspect, 0.1, 100);
+    gl.uniformMatrix4fv(uProjection, false, proj);
+    prevW = gl.canvas.width; prevH = gl.canvas.height;
+  }
   requestAnimationFrame(render);
-}
-requestAnimationFrame(render);
-
-// 리사이즈 대응
-addEventListener('resize', () => {
-  canvas.width = innerWidth; canvas.height = innerHeight;
-});
+})();
 </script>
 </body>
 </html>
